@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { loadFromStorage, loadFromStorageSync, saveToStorage, migrateData } from '../utils/storage';
-import { subscribeToFirebase } from '../utils/firebaseStorage';
-import { firebaseConfig } from '../config/firebase-config';
+import { loadFromStorageSync, saveToStorage, migrateData } from '../utils/storage';
 
 const AppContext = createContext();
 
@@ -14,19 +12,6 @@ export function useApp() {
 }
 
 export function AppProvider({ children }) {
-  const useFirebase = firebaseConfig !== null;
-  
-  // 디버깅: 즉시 로그 출력 (useEffect 전에)
-  console.log('=== AppProvider 렌더링 ===');
-  console.log('firebaseConfig:', firebaseConfig);
-  console.log('useFirebase:', useFirebase);
-  
-  // 디버깅: Firebase 설정 확인
-  useEffect(() => {
-    console.log('=== AppProvider useEffect 실행 ===');
-    console.log('Firebase 설정:', firebaseConfig ? '있음' : '없음');
-    console.log('useFirebase:', useFirebase);
-  }, [useFirebase]);
   
   // 학생 목록 (초기값은 LocalStorage에서)
   const [students, setStudents] = useState(() => {
@@ -47,155 +32,14 @@ export function AppProvider({ children }) {
     return loadFromStorageSync('adminPassword', null);
   });
 
-  // Firebase 초기 로드 및 실시간 동기화
-  useEffect(() => {
-    if (!useFirebase) {
-      console.log('Firebase가 설정되지 않았습니다. LocalStorage만 사용합니다.');
-      return;
-    }
-
-    let unsubscribes = [];
-    let isInitialLoadComplete = false;
-
-    // 초기 로드 및 마이그레이션
-    const loadInitialData = async () => {
-      try {
-        // Firebase에서 isAdminMode 문서가 있으면 삭제 (보안상)
-        try {
-          const { getFirestore, doc, getDoc, deleteDoc } = await import('firebase/firestore');
-          const { initializeApp } = await import('firebase/app');
-          const app = initializeApp(firebaseConfig);
-          const db = getFirestore(app);
-          const isAdminModeRef = doc(db, 'attendanceApp', 'isAdminMode');
-          const isAdminModeSnap = await getDoc(isAdminModeRef);
-          if (isAdminModeSnap.exists()) {
-            await deleteDoc(isAdminModeRef);
-            console.log('✅ Firebase에서 isAdminMode 문서 삭제 완료');
-          }
-        } catch (e) {
-          // 삭제 실패해도 계속 진행
-          console.log('isAdminMode 삭제 시도 중 오류 (무시):', e);
-        }
-
-        console.log('=== Firebase 초기 데이터 로딩 시작 ===');
-        
-        // Firebase에서 데이터 가져오기
-        const [firebaseStudents, firebaseAttendance, firebasePassword] = await Promise.all([
-          loadFromStorage('students', null),
-          loadFromStorage('attendanceData', null),
-          loadFromStorage('adminPassword', null)
-        ]);
-
-        console.log('Firebase에서 로드된 데이터:', {
-          students: firebaseStudents?.length || 0,
-          attendance: firebaseAttendance?.length || 0,
-          hasPassword: firebasePassword !== null
-        });
-
-        // LocalStorage에서 데이터 가져오기
-        const localStudents = loadFromStorageSync('students', []);
-        const localAttendance = loadFromStorageSync('attendanceData', []);
-        const localPassword = loadFromStorageSync('adminPassword', null);
-
-        // Firebase 데이터가 있으면 우선 사용, 없으면 LocalStorage 사용 후 Firebase에 업로드
-        if (firebaseStudents !== null && Array.isArray(firebaseStudents)) {
-          console.log('Firebase에서 학생 데이터 사용:', firebaseStudents.length, '명');
-          setStudents(migrateData(firebaseStudents));
-        } else if (localStudents.length > 0) {
-          console.log('LocalStorage 학생 데이터를 Firebase에 업로드합니다...', localStudents.length, '명');
-          const migrated = migrateData(localStudents);
-          setStudents(migrated);
-          await saveToStorage('students', migrated);
-        }
-
-        if (firebaseAttendance !== null && Array.isArray(firebaseAttendance)) {
-          console.log('Firebase에서 출석 데이터 사용:', firebaseAttendance.length, '건');
-          setAttendanceData(firebaseAttendance);
-        } else if (localAttendance.length > 0) {
-          console.log('LocalStorage 출석 데이터를 Firebase에 업로드합니다...', localAttendance.length, '건');
-          setAttendanceData(localAttendance);
-          await saveToStorage('attendanceData', localAttendance);
-        }
-
-        // 관리자 비밀번호는 Firebase에서 로드
-        if (firebasePassword !== null) {
-          console.log('Firebase에서 관리자 비밀번호 로드됨');
-          setAdminPassword(firebasePassword);
-        } else if (localPassword !== null) {
-          console.log('LocalStorage 관리자 비밀번호를 Firebase에 업로드합니다...');
-          setAdminPassword(localPassword);
-          await saveToStorage('adminPassword', localPassword);
-        }
-
-        isInitialLoadComplete = true;
-        console.log('=== Firebase 초기 데이터 로딩 완료 ===');
-
-        // 초기 로드 완료 후 실시간 동기화 구독 시작
-        console.log('실시간 동기화 구독 시작...');
-        
-        unsubscribes.push(subscribeToFirebase('students', (data) => {
-          if (isInitialLoadComplete && data !== null && Array.isArray(data) && data.length > 0) {
-            console.log('🔄 Firebase에서 students 실시간 업데이트:', data.length, '명');
-            isUpdatingFromFirebase.current.students = true;
-            setStudents(migrateData(data));
-          } else if (isInitialLoadComplete && data !== null && Array.isArray(data) && data.length === 0) {
-            console.log('⚠️ Firebase에서 빈 students 배열 수신, 무시합니다.');
-          }
-        }));
-
-        unsubscribes.push(subscribeToFirebase('attendanceData', (data) => {
-          if (isInitialLoadComplete && data !== null && Array.isArray(data)) {
-            console.log('🔄 Firebase에서 attendanceData 실시간 업데이트:', data.length, '건');
-            isUpdatingFromFirebase.current.attendanceData = true;
-            setAttendanceData(data);
-          }
-        }));
-
-        unsubscribes.push(subscribeToFirebase('adminPassword', (data) => {
-          if (isInitialLoadComplete && data !== null) {
-            console.log('🔄 Firebase에서 adminPassword 실시간 업데이트');
-            setAdminPassword(data);
-          }
-        }));
-
-        console.log('✅ 실시간 동기화 구독 완료');
-
-      } catch (error) {
-        console.error('❌ Firebase 초기 로드 오류:', error);
-        isInitialLoadComplete = true;
-      }
-    };
-
-    loadInitialData();
-
-    // 클린업
-    return () => {
-      console.log('Firebase 구독 해제');
-      unsubscribes.forEach(unsub => unsub && unsub());
-      unsubscribes = [];
-    };
-  }, [useFirebase]);
-
-  // Firebase에서 업데이트 중인지 추적 (무한 루프 방지)
-  const isUpdatingFromFirebase = React.useRef({ students: false, attendanceData: false });
 
   // 학생 목록 저장
   useEffect(() => {
-    // Firebase에서 업데이트 중이면 저장하지 않음 (무한 루프 방지)
-    if (isUpdatingFromFirebase.current.students) {
-      isUpdatingFromFirebase.current.students = false;
-      return;
-    }
     saveToStorage('students', students);
   }, [students]);
 
   // 출석 기록 저장
   useEffect(() => {
-    // Firebase에서 업데이트 중이면 저장하지 않음 (무한 루프 방지)
-    if (isUpdatingFromFirebase.current.attendanceData) {
-      isUpdatingFromFirebase.current.attendanceData = false;
-      return;
-    }
     saveToStorage('attendanceData', attendanceData);
   }, [attendanceData]);
 
