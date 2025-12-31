@@ -117,15 +117,19 @@ export function AppProvider({ children }) {
         console.log('실시간 동기화 구독 시작...');
         
         unsubscribes.push(subscribeToFirebase('students', (data) => {
-          if (isInitialLoadComplete && data !== null && Array.isArray(data)) {
+          if (isInitialLoadComplete && data !== null && Array.isArray(data) && data.length > 0) {
             console.log('🔄 Firebase에서 students 실시간 업데이트:', data.length, '명');
+            isUpdatingFromFirebase.current.students = true;
             setStudents(migrateData(data));
+          } else if (isInitialLoadComplete && data !== null && Array.isArray(data) && data.length === 0) {
+            console.log('⚠️ Firebase에서 빈 students 배열 수신, 무시합니다.');
           }
         }));
 
         unsubscribes.push(subscribeToFirebase('attendanceData', (data) => {
           if (isInitialLoadComplete && data !== null && Array.isArray(data)) {
             console.log('🔄 Firebase에서 attendanceData 실시간 업데이트:', data.length, '건');
+            isUpdatingFromFirebase.current.attendanceData = true;
             setAttendanceData(data);
           }
         }));
@@ -155,13 +159,26 @@ export function AppProvider({ children }) {
     };
   }, [useFirebase]);
 
+  // Firebase에서 업데이트 중인지 추적 (무한 루프 방지)
+  const isUpdatingFromFirebase = React.useRef({ students: false, attendanceData: false });
+
   // 학생 목록 저장
   useEffect(() => {
+    // Firebase에서 업데이트 중이면 저장하지 않음 (무한 루프 방지)
+    if (isUpdatingFromFirebase.current.students) {
+      isUpdatingFromFirebase.current.students = false;
+      return;
+    }
     saveToStorage('students', students);
   }, [students]);
 
   // 출석 기록 저장
   useEffect(() => {
+    // Firebase에서 업데이트 중이면 저장하지 않음 (무한 루프 방지)
+    if (isUpdatingFromFirebase.current.attendanceData) {
+      isUpdatingFromFirebase.current.attendanceData = false;
+      return;
+    }
     saveToStorage('attendanceData', attendanceData);
   }, [attendanceData]);
 
