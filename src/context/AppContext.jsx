@@ -39,10 +39,8 @@ export function AppProvider({ children }) {
     return loadFromStorageSync('attendanceData', []);
   });
 
-  // 관리자 모드 (초기값은 LocalStorage에서)
-  const [isAdminMode, setIsAdminMode] = useState(() => {
-    return loadFromStorageSync('isAdminMode', false);
-  });
+  // 관리자 모드 (항상 false로 시작 - 보안상 로그인해야만 관리자 모드)
+  const [isAdminMode, setIsAdminMode] = useState(false);
 
   // 관리자 비밀번호 (초기값은 LocalStorage에서)
   const [adminPassword, setAdminPassword] = useState(() => {
@@ -51,7 +49,10 @@ export function AppProvider({ children }) {
 
   // Firebase 초기 로드 및 실시간 동기화
   useEffect(() => {
-    if (!useFirebase) return;
+    if (!useFirebase) {
+      console.log('Firebase가 설정되지 않았습니다. LocalStorage만 사용합니다.');
+      return;
+    }
 
     let unsubscribes = [];
     let isInitialLoadComplete = false;
@@ -59,88 +60,87 @@ export function AppProvider({ children }) {
     // 초기 로드 및 마이그레이션
     const loadInitialData = async () => {
       try {
-        console.log('Firebase 초기 데이터 로딩 시작...');
+        console.log('=== Firebase 초기 데이터 로딩 시작 ===');
         
         // Firebase에서 데이터 가져오기
-        const [firebaseStudents, firebaseAttendance, firebaseAdminMode, firebasePassword] = await Promise.all([
+        const [firebaseStudents, firebaseAttendance, firebasePassword] = await Promise.all([
           loadFromStorage('students', null),
           loadFromStorage('attendanceData', null),
-          loadFromStorage('isAdminMode', null),
           loadFromStorage('adminPassword', null)
         ]);
 
-        console.log('Firebase 데이터:', { firebaseStudents, firebaseAttendance, firebaseAdminMode, firebasePassword });
+        console.log('Firebase에서 로드된 데이터:', {
+          students: firebaseStudents?.length || 0,
+          attendance: firebaseAttendance?.length || 0,
+          hasPassword: firebasePassword !== null
+        });
 
         // LocalStorage에서 데이터 가져오기
         const localStudents = loadFromStorageSync('students', []);
         const localAttendance = loadFromStorageSync('attendanceData', []);
-        const localAdminMode = loadFromStorageSync('isAdminMode', false);
         const localPassword = loadFromStorageSync('adminPassword', null);
 
         // Firebase 데이터가 있으면 우선 사용, 없으면 LocalStorage 사용 후 Firebase에 업로드
-        if (firebaseStudents !== null) {
+        if (firebaseStudents !== null && Array.isArray(firebaseStudents)) {
+          console.log('Firebase에서 학생 데이터 사용:', firebaseStudents.length, '명');
           setStudents(migrateData(firebaseStudents));
         } else if (localStudents.length > 0) {
-          console.log('LocalStorage 학생 데이터를 Firebase에 업로드합니다...');
+          console.log('LocalStorage 학생 데이터를 Firebase에 업로드합니다...', localStudents.length, '명');
           const migrated = migrateData(localStudents);
           setStudents(migrated);
           await saveToStorage('students', migrated);
         }
 
-        if (firebaseAttendance !== null) {
+        if (firebaseAttendance !== null && Array.isArray(firebaseAttendance)) {
+          console.log('Firebase에서 출석 데이터 사용:', firebaseAttendance.length, '건');
           setAttendanceData(firebaseAttendance);
         } else if (localAttendance.length > 0) {
-          console.log('LocalStorage 출석 데이터를 Firebase에 업로드합니다...');
+          console.log('LocalStorage 출석 데이터를 Firebase에 업로드합니다...', localAttendance.length, '건');
           setAttendanceData(localAttendance);
           await saveToStorage('attendanceData', localAttendance);
         }
 
-        if (firebaseAdminMode !== null) {
-          setIsAdminMode(firebaseAdminMode);
-        } else if (localAdminMode !== false) {
-          setIsAdminMode(localAdminMode);
-          await saveToStorage('isAdminMode', localAdminMode);
-        }
-
+        // 관리자 비밀번호는 Firebase에서 로드
         if (firebasePassword !== null) {
+          console.log('Firebase에서 관리자 비밀번호 로드됨');
           setAdminPassword(firebasePassword);
         } else if (localPassword !== null) {
+          console.log('LocalStorage 관리자 비밀번호를 Firebase에 업로드합니다...');
           setAdminPassword(localPassword);
           await saveToStorage('adminPassword', localPassword);
         }
 
         isInitialLoadComplete = true;
-        console.log('Firebase 초기 데이터 로딩 완료');
+        console.log('=== Firebase 초기 데이터 로딩 완료 ===');
 
         // 초기 로드 완료 후 실시간 동기화 구독 시작
+        console.log('실시간 동기화 구독 시작...');
+        
         unsubscribes.push(subscribeToFirebase('students', (data) => {
           if (isInitialLoadComplete && data !== null && Array.isArray(data)) {
-            console.log('Firebase에서 students 업데이트 받음:', data);
+            console.log('🔄 Firebase에서 students 실시간 업데이트:', data.length, '명');
             setStudents(migrateData(data));
           }
         }));
 
         unsubscribes.push(subscribeToFirebase('attendanceData', (data) => {
           if (isInitialLoadComplete && data !== null && Array.isArray(data)) {
-            console.log('Firebase에서 attendanceData 업데이트 받음:', data);
+            console.log('🔄 Firebase에서 attendanceData 실시간 업데이트:', data.length, '건');
             setAttendanceData(data);
-          }
-        }));
-
-        unsubscribes.push(subscribeToFirebase('isAdminMode', (data) => {
-          if (isInitialLoadComplete && typeof data === 'boolean') {
-            setIsAdminMode(data);
           }
         }));
 
         unsubscribes.push(subscribeToFirebase('adminPassword', (data) => {
           if (isInitialLoadComplete && data !== null) {
+            console.log('🔄 Firebase에서 adminPassword 실시간 업데이트');
             setAdminPassword(data);
           }
         }));
 
+        console.log('✅ 실시간 동기화 구독 완료');
+
       } catch (error) {
-        console.error('Firebase 초기 로드 오류:', error);
+        console.error('❌ Firebase 초기 로드 오류:', error);
         isInitialLoadComplete = true;
       }
     };
@@ -149,6 +149,7 @@ export function AppProvider({ children }) {
 
     // 클린업
     return () => {
+      console.log('Firebase 구독 해제');
       unsubscribes.forEach(unsub => unsub && unsub());
       unsubscribes = [];
     };
@@ -164,9 +165,16 @@ export function AppProvider({ children }) {
     saveToStorage('attendanceData', attendanceData);
   }, [attendanceData]);
 
-  // 관리자 모드 저장
+  // 관리자 모드는 Firebase에 저장하지 않음 (보안상)
+  // LocalStorage에만 저장 (세션 유지용)
   useEffect(() => {
-    saveToStorage('isAdminMode', isAdminMode);
+    if (isAdminMode) {
+      // 관리자 모드일 때만 LocalStorage에 저장 (세션 유지)
+      localStorage.setItem('isAdminMode', JSON.stringify(true));
+    } else {
+      // 로그아웃 시 LocalStorage에서 제거
+      localStorage.removeItem('isAdminMode');
+    }
   }, [isAdminMode]);
 
   // 관리자 비밀번호 저장
