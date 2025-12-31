@@ -48,12 +48,18 @@ export function loadFromStorageSync(key, defaultValue = null) {
 }
 
 // 스토리지 쓰기 (Firebase 우선, 없으면 LocalStorage)
+// isAdminMode는 보안상 Firebase에 저장하지 않음
 export async function saveToStorage(key, value) {
   // 먼저 LocalStorage에 저장 (빠른 반응을 위해)
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (error) {
     console.error(`Error saving ${key} to localStorage:`, error);
+  }
+  
+  // isAdminMode는 Firebase에 저장하지 않음 (보안상)
+  if (key === 'isAdminMode') {
+    return true;
   }
   
   // Firebase에도 저장
