@@ -60,6 +60,23 @@ export function AppProvider({ children }) {
     // 초기 로드 및 마이그레이션
     const loadInitialData = async () => {
       try {
+        // Firebase에서 isAdminMode 문서가 있으면 삭제 (보안상)
+        try {
+          const { getFirestore, doc, getDoc, deleteDoc } = await import('firebase/firestore');
+          const { initializeApp } = await import('firebase/app');
+          const app = initializeApp(firebaseConfig);
+          const db = getFirestore(app);
+          const isAdminModeRef = doc(db, 'attendanceApp', 'isAdminMode');
+          const isAdminModeSnap = await getDoc(isAdminModeRef);
+          if (isAdminModeSnap.exists()) {
+            await deleteDoc(isAdminModeRef);
+            console.log('✅ Firebase에서 isAdminMode 문서 삭제 완료');
+          }
+        } catch (e) {
+          // 삭제 실패해도 계속 진행
+          console.log('isAdminMode 삭제 시도 중 오류 (무시):', e);
+        }
+
         console.log('=== Firebase 초기 데이터 로딩 시작 ===');
         
         // Firebase에서 데이터 가져오기

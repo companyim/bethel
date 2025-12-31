@@ -62,6 +62,12 @@ export async function loadFromFirebase(key, defaultValue = null) {
 
 // Firebase에 데이터 쓰기
 export async function saveToFirebase(key, value) {
+  // isAdminMode는 보안상 Firebase에 저장하지 않음
+  if (key === 'isAdminMode') {
+    console.log(`⚠️ isAdminMode는 보안상 Firebase에 저장하지 않습니다.`);
+    return false;
+  }
+
   const firestore = initFirebase();
   if (!firestore) {
     console.log(`Firebase가 초기화되지 않았습니다. ${key} 저장 불가.`);
